@@ -2,7 +2,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import copy from "copy-to-clipboard";
 import { CopyIcon, DownloadIcon, Fingerprint, QrCode } from "lucide-react";
 import QRCode from "qrcode";
-import { useEffect, useState } from "react";
+import { useReducer } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -81,15 +81,83 @@ Generated on: ${DATE_PLACEHOLDER}
 ${BACKUP_CODES_PLACEHOLDER}
 `;
 
+// --- Reducer ---
+
+type Enable2FAState = {
+	data: TwoFactorSetupData | null;
+	backupCodes: string[];
+	isDialogOpen: boolean;
+	step: "password" | "verify";
+	isPasswordLoading: boolean;
+	otpValue: string;
+};
+
+const enable2FAInitialState: Enable2FAState = {
+	data: null,
+	backupCodes: [],
+	isDialogOpen: false,
+	step: "password",
+	isPasswordLoading: false,
+	otpValue: "",
+};
+
+type Enable2FAAction =
+	| { type: "OPEN_DIALOG" }
+	| { type: "CLOSE_DIALOG" }
+	| { type: "RESET_ON_CLOSE" }
+	| { type: "SET_DATA"; payload: TwoFactorSetupData }
+	| { type: "SET_BACKUP_CODES"; payload: string[] }
+	| { type: "SET_STEP"; payload: "password" | "verify" }
+	| { type: "SET_IS_PASSWORD_LOADING"; payload: boolean }
+	| { type: "SET_OTP_VALUE"; payload: string };
+
+function enable2FAReducer(
+	state: Enable2FAState,
+	action: Enable2FAAction,
+): Enable2FAState {
+	switch (action.type) {
+		case "OPEN_DIALOG":
+			return { ...state, isDialogOpen: true };
+		case "CLOSE_DIALOG":
+			return { ...state, isDialogOpen: false };
+		case "RESET_ON_CLOSE":
+			return { ...enable2FAInitialState };
+		case "SET_DATA":
+			return { ...state, data: action.payload };
+		case "SET_BACKUP_CODES":
+			return { ...state, backupCodes: action.payload };
+		case "SET_STEP":
+			// When transitioning to verify step, reset the OTP value
+			return {
+				...state,
+				step: action.payload,
+				otpValue: action.payload === "verify" ? "" : state.otpValue,
+			};
+		case "SET_IS_PASSWORD_LOADING":
+			return { ...state, isPasswordLoading: action.payload };
+		case "SET_OTP_VALUE":
+			return { ...state, otpValue: action.payload };
+		default:
+			return state;
+	}
+}
+
 export const Enable2FA = () => {
 	const utils = api.useUtils();
-	const [data, setData] = useState<TwoFactorSetupData | null>(null);
-	const [backupCodes, setBackupCodes] = useState<string[]>([]);
-	const [isDialogOpen, setIsDialogOpen] = useState(false);
-	const [step, setStep] = useState<"password" | "verify">("password");
-	const [isPasswordLoading, setIsPasswordLoading] = useState(false);
-	const [otpValue, setOtpValue] = useState("");
 	const { data: currentUser } = api.user.get.useQuery();
+	const [state, dispatch] = useReducer(enable2FAReducer, enable2FAInitialState);
+	const { data, backupCodes, isDialogOpen, step, isPasswordLoading, otpValue } =
+		state;
+
+	// Reset all state when dialog closes
+	const handleDialogOpenChange = (open: boolean) => {
+		if (!open) {
+			dispatch({ type: "RESET_ON_CLOSE" });
+			passwordForm.reset({ password: "", issuer: "" });
+		} else {
+			dispatch({ type: "OPEN_DIALOG" });
+		}
+	};
 
 	const handleVerifySubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
@@ -113,7 +181,7 @@ export const Enable2FA = () => {
 
 			toast.success("2FA configured successfully");
 			utils.user.get.invalidate();
-			setIsDialogOpen(false);
+			dispatch({ type: "RESET_ON_CLOSE" });
 		} catch (error) {
 			if (error instanceof Error) {
 				const errorMessage =
@@ -144,27 +212,8 @@ export const Enable2FA = () => {
 		},
 	});
 
-	useEffect(() => {
-		if (!isDialogOpen) {
-			setStep("password");
-			setData(null);
-			setBackupCodes([]);
-			setOtpValue("");
-			passwordForm.reset({
-				password: "",
-				issuer: "",
-			});
-		}
-	}, [isDialogOpen, passwordForm]);
-
-	useEffect(() => {
-		if (step === "verify") {
-			setOtpValue("");
-		}
-	}, [step]);
-
 	const handlePasswordSubmit = async (formData: PasswordForm) => {
-		setIsPasswordLoading(true);
+		dispatch({ type: "SET_IS_PASSWORD_LOADING", payload: true });
 		try {
 			const { data: enableData, error } = await authClient.twoFactor.enable({
 				password: formData.password,
@@ -176,19 +225,22 @@ export const Enable2FA = () => {
 			}
 
 			if (enableData.backupCodes) {
-				setBackupCodes(enableData.backupCodes);
+				dispatch({ type: "SET_BACKUP_CODES", payload: enableData.backupCodes });
 			}
 
 			if (enableData.totpURI) {
 				const qrCodeUrl = await QRCode.toDataURL(enableData.totpURI);
 
-				setData({
-					qrCodeUrl,
-					secret: enableData.totpURI.split("secret=")[1]?.split("&")[0] || "",
-					totpURI: enableData.totpURI,
+				dispatch({
+					type: "SET_DATA",
+					payload: {
+						qrCodeUrl,
+						secret: enableData.totpURI.split("secret=")[1]?.split("&")[0] || "",
+						totpURI: enableData.totpURI,
+					},
 				});
 
-				setStep("verify");
+				dispatch({ type: "SET_STEP", payload: "verify" });
 				toast.success("Scan the QR code with your authenticator app");
 			} else {
 				throw new Error("No TOTP URI received from server");
@@ -202,7 +254,7 @@ export const Enable2FA = () => {
 					error instanceof Error ? error.message : "Error setting up 2FA",
 			});
 		} finally {
-			setIsPasswordLoading(false);
+			dispatch({ type: "SET_IS_PASSWORD_LOADING", payload: false });
 		}
 	};
 
@@ -255,7 +307,7 @@ export const Enable2FA = () => {
 	};
 
 	return (
-		<Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+		<Dialog open={isDialogOpen} onOpenChange={handleDialogOpenChange}>
 			<DialogTrigger asChild>
 				<Button variant="ghost">
 					<Fingerprint className="size-4 text-muted-foreground" />
@@ -428,7 +480,9 @@ export const Enable2FA = () => {
 								<InputOTP
 									maxLength={6}
 									value={otpValue}
-									onChange={setOtpValue}
+									onChange={(val) =>
+										dispatch({ type: "SET_OTP_VALUE", payload: val })
+									}
 									autoComplete="off"
 								>
 									<InputOTPGroup>

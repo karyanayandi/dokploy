@@ -7,7 +7,8 @@ import {
 	Pause,
 	Play,
 } from "lucide-react";
-import React, { useEffect, useRef } from "react";
+import type React from "react";
+import { useEffect, useReducer, useRef } from "react";
 import { AlertBlock } from "@/components/shared/alert-block";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +48,125 @@ export const priorities = [
 	},
 ];
 
+// --- Reducer ---
+
+type DockerLogsState = {
+	rawLogs: string;
+	filteredLogs: LogLine[];
+	autoScroll: boolean;
+	lines: number;
+	search: string;
+	showTimestamp: boolean;
+	since: TimeFilter;
+	typeFilter: string[];
+	isPaused: boolean;
+	messageBuffer: string[];
+	isLoading: boolean;
+	copied: boolean;
+};
+
+const dockerLogsInitialState: DockerLogsState = {
+	rawLogs: "",
+	filteredLogs: [],
+	autoScroll: true,
+	lines: 100,
+	search: "",
+	showTimestamp: true,
+	since: "all",
+	typeFilter: [],
+	isPaused: false,
+	messageBuffer: [],
+	isLoading: false,
+	copied: false,
+};
+
+type DockerLogsAction =
+	| { type: "SET_RAW_LOGS"; payload: string }
+	| { type: "APPEND_RAW_LOGS"; payload: { data: string; maxLines: number } }
+	| { type: "SET_FILTERED_LOGS"; payload: LogLine[] }
+	| { type: "SET_AUTO_SCROLL"; payload: boolean }
+	| { type: "SET_LINES"; payload: number }
+	| { type: "SET_SEARCH"; payload: string }
+	| { type: "SET_SHOW_TIMESTAMP"; payload: boolean }
+	| { type: "SET_SINCE"; payload: TimeFilter }
+	| { type: "SET_TYPE_FILTER"; payload: string[] }
+	| { type: "SET_IS_PAUSED"; payload: boolean }
+	| { type: "APPEND_BUFFER"; payload: string }
+	| { type: "FLUSH_BUFFER"; payload: { maxLines: number } }
+	| { type: "SET_IS_LOADING"; payload: boolean }
+	| { type: "SET_COPIED"; payload: boolean }
+	| { type: "RESET_LOGS" };
+
+function dockerLogsReducer(
+	state: DockerLogsState,
+	action: DockerLogsAction,
+): DockerLogsState {
+	switch (action.type) {
+		case "SET_RAW_LOGS":
+			return { ...state, rawLogs: action.payload };
+		case "APPEND_RAW_LOGS": {
+			const updated = state.rawLogs + action.payload.data;
+			const splitLines = updated.split("\n");
+			return {
+				...state,
+				rawLogs:
+					splitLines.length > action.payload.maxLines
+						? splitLines.slice(-action.payload.maxLines).join("\n")
+						: updated,
+			};
+		}
+		case "SET_FILTERED_LOGS":
+			return { ...state, filteredLogs: action.payload };
+		case "SET_AUTO_SCROLL":
+			return { ...state, autoScroll: action.payload };
+		case "SET_LINES":
+			return { ...state, lines: action.payload };
+		case "SET_SEARCH":
+			return { ...state, search: action.payload };
+		case "SET_SHOW_TIMESTAMP":
+			return { ...state, showTimestamp: action.payload };
+		case "SET_SINCE":
+			return { ...state, since: action.payload };
+		case "SET_TYPE_FILTER":
+			return { ...state, typeFilter: action.payload };
+		case "SET_IS_PAUSED":
+			return { ...state, isPaused: action.payload };
+		case "APPEND_BUFFER":
+			return {
+				...state,
+				messageBuffer: [...state.messageBuffer, action.payload],
+			};
+		case "FLUSH_BUFFER": {
+			if (state.messageBuffer.length === 0) {
+				return { ...state, isPaused: false };
+			}
+			const bufferedContent = state.messageBuffer.join("");
+			const updated = state.rawLogs + bufferedContent;
+			const splitLines = updated.split("\n");
+			const newRaw =
+				splitLines.length > action.payload.maxLines
+					? splitLines.slice(-action.payload.maxLines).join("\n")
+					: updated;
+			return { ...state, rawLogs: newRaw, messageBuffer: [], isPaused: false };
+		}
+		case "SET_IS_LOADING":
+			return { ...state, isLoading: action.payload };
+		case "SET_COPIED":
+			return { ...state, copied: action.payload };
+		case "RESET_LOGS":
+			return {
+				...state,
+				rawLogs: "",
+				filteredLogs: [],
+				messageBuffer: [],
+				isPaused: false,
+				isLoading: true,
+			};
+		default:
+			return state;
+	}
+}
+
 export const DockerLogsId: React.FC<Props> = ({
 	containerId,
 	serverId,
@@ -62,20 +182,32 @@ export const DockerLogsId: React.FC<Props> = ({
 		},
 	);
 
-	const [rawLogs, setRawLogs] = React.useState("");
-	const [filteredLogs, setFilteredLogs] = React.useState<LogLine[]>([]);
-	const [autoScroll, setAutoScroll] = React.useState(true);
-	const [lines, setLines] = React.useState<number>(100);
-	const [search, setSearch] = React.useState<string>("");
-	const [showTimestamp, setShowTimestamp] = React.useState(true);
-	const [since, setSince] = React.useState<TimeFilter>("all");
-	const [typeFilter, setTypeFilter] = React.useState<string[]>([]);
-	const [isPaused, setIsPaused] = React.useState(false);
-	const [messageBuffer, setMessageBuffer] = React.useState<string[]>([]);
+	const [state, dispatch] = useReducer(
+		dockerLogsReducer,
+		dockerLogsInitialState,
+	);
+	const {
+		rawLogs,
+		filteredLogs,
+		autoScroll,
+		lines,
+		search,
+		showTimestamp,
+		since,
+		typeFilter,
+		isPaused,
+		messageBuffer,
+		isLoading,
+		copied,
+	} = state;
+
+	// Keep a ref in sync with isPaused so WebSocket callbacks don't capture stale state
 	const isPausedRef = useRef(false);
 	const scrollRef = useRef<HTMLDivElement>(null);
-	const [isLoading, setIsLoading] = React.useState(false);
-	const [copied, setCopied] = React.useState(false);
+
+	useEffect(() => {
+		isPausedRef.current = isPaused;
+	}, [isPaused]);
 
 	const scrollToBottom = () => {
 		if (autoScroll && scrollRef.current) {
@@ -88,46 +220,33 @@ export const DockerLogsId: React.FC<Props> = ({
 
 		const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
 		const isAtBottom = Math.abs(scrollHeight - scrollTop - clientHeight) < 10;
-		setAutoScroll(isAtBottom);
+		dispatch({ type: "SET_AUTO_SCROLL", payload: isAtBottom });
 	};
 
 	const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-		setSearch(e.target.value || "");
+		dispatch({ type: "SET_SEARCH", payload: e.target.value || "" });
 	};
 
-	const handleLines = (lines: number) => {
-		setRawLogs("");
-		setFilteredLogs([]);
-		setMessageBuffer([]);
-		setLines(lines);
+	const handleLines = (newLines: number) => {
+		dispatch({ type: "SET_LINES", payload: newLines });
+		// Reset logs; the WebSocket effect will re-connect due to lines dependency
+		dispatch({ type: "RESET_LOGS" });
 	};
 
 	const handleSince = (value: TimeFilter) => {
-		setRawLogs("");
-		setFilteredLogs([]);
-		setMessageBuffer([]);
-		setSince(value);
+		dispatch({ type: "SET_SINCE", payload: value });
+		// Reset logs; the WebSocket effect will re-connect due to since dependency
+		dispatch({ type: "RESET_LOGS" });
 	};
 
 	const handlePauseResume = () => {
 		if (isPaused) {
-			// Resume: Apply all buffered messages
-			if (messageBuffer.length > 0) {
-				const bufferedContent = messageBuffer.join("");
-				setRawLogs((prev) => {
-					const updated = prev + bufferedContent;
-					const splitLines = updated.split("\n");
-					if (splitLines.length > lines) {
-						return splitLines.slice(-lines).join("\n");
-					}
-					return updated;
-				});
-				setMessageBuffer([]);
-			}
+			// Resume: flush buffered messages into rawLogs
+			dispatch({ type: "FLUSH_BUFFER", payload: { maxLines: lines } });
+		} else {
+			dispatch({ type: "SET_IS_PAUSED", payload: true });
 		}
-		const newPausedState = !isPaused;
-		setIsPaused(newPausedState);
-		isPausedRef.current = newPausedState;
+		isPausedRef.current = !isPaused;
 	};
 
 	useEffect(() => {
@@ -135,12 +254,7 @@ export const DockerLogsId: React.FC<Props> = ({
 
 		let isCurrentConnection = true;
 		let noDataTimeout: NodeJS.Timeout;
-		setIsLoading(true);
-		setRawLogs("");
-		setFilteredLogs([]);
-		setMessageBuffer([]);
-		// Reset pause state when container changes
-		setIsPaused(false);
+		dispatch({ type: "RESET_LOGS" });
 		isPausedRef.current = false;
 
 		const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -165,7 +279,7 @@ export const DockerLogsId: React.FC<Props> = ({
 			if (noDataTimeout) clearTimeout(noDataTimeout);
 			noDataTimeout = setTimeout(() => {
 				if (isCurrentConnection) {
-					setIsLoading(false);
+					dispatch({ type: "SET_IS_LOADING", payload: false });
 				}
 			}, 2000); // Wait 2 seconds for data before showing "No logs found"
 		};
@@ -183,34 +297,30 @@ export const DockerLogsId: React.FC<Props> = ({
 
 			if (isPausedRef.current) {
 				// When paused, buffer the messages instead of displaying them
-				setMessageBuffer((prev) => [...prev, e.data]);
+				dispatch({ type: "APPEND_BUFFER", payload: e.data });
 			} else {
-				// When not paused, display messages normally
-				setRawLogs((prev) => {
-					const updated = prev + e.data;
-					const splitLines = updated.split("\n");
-					if (splitLines.length > lines) {
-						return splitLines.slice(-lines).join("\n");
-					}
-					return updated;
+				// When not paused, append to rawLogs (truncated to maxLines)
+				dispatch({
+					type: "APPEND_RAW_LOGS",
+					payload: { data: e.data, maxLines: lines },
 				});
 			}
 
-			setIsLoading(false);
+			dispatch({ type: "SET_IS_LOADING", payload: false });
 			if (noDataTimeout) clearTimeout(noDataTimeout);
 		};
 
 		ws.onerror = (error) => {
 			if (!isCurrentConnection) return;
 			console.error("WebSocket error:", error);
-			setIsLoading(false);
+			dispatch({ type: "SET_IS_LOADING", payload: false });
 			if (noDataTimeout) clearTimeout(noDataTimeout);
 		};
 
 		ws.onclose = (e) => {
 			if (!isCurrentConnection) return;
 			console.log("WebSocket closed:", e.reason);
-			setIsLoading(false);
+			dispatch({ type: "SET_IS_LOADING", payload: false });
 			if (noDataTimeout) clearTimeout(noDataTimeout);
 		};
 
@@ -264,8 +374,8 @@ export const DockerLogsId: React.FC<Props> = ({
 
 		const success = copy(logContent);
 		if (success) {
-			setCopied(true);
-			setTimeout(() => setCopied(false), 2000);
+			dispatch({ type: "SET_COPIED", payload: true });
+			setTimeout(() => dispatch({ type: "SET_COPIED", payload: false }), 2000);
 		}
 	};
 
@@ -281,21 +391,14 @@ export const DockerLogsId: React.FC<Props> = ({
 		});
 	};
 
-	// Sync isPausedRef with isPaused state
 	useEffect(() => {
-		isPausedRef.current = isPaused;
-	}, [isPaused]);
-
-	useEffect(() => {
-		setRawLogs("");
-		setFilteredLogs([]);
-		setMessageBuffer([]);
+		dispatch({ type: "RESET_LOGS" });
 	}, [containerId]);
 
 	useEffect(() => {
 		const logs = parseLogs(rawLogs);
 		const filtered = handleFilter(logs);
-		setFilteredLogs(filtered);
+		dispatch({ type: "SET_FILTERED_LOGS", payload: filtered });
 	}, [rawLogs, search, lines, since, typeFilter]);
 
 	useEffect(() => {
@@ -318,12 +421,16 @@ export const DockerLogsId: React.FC<Props> = ({
 								value={since}
 								onValueChange={handleSince}
 								showTimestamp={showTimestamp}
-								onTimestampChange={setShowTimestamp}
+								onTimestampChange={(val) =>
+									dispatch({ type: "SET_SHOW_TIMESTAMP", payload: val })
+								}
 							/>
 
 							<StatusLogsFilter
 								value={typeFilter}
-								setValue={setTypeFilter}
+								setValue={(val) =>
+									dispatch({ type: "SET_TYPE_FILTER", payload: val })
+								}
 								title="Log type"
 								options={priorities}
 							/>

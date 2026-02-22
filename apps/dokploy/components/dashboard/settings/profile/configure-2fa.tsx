@@ -7,7 +7,7 @@ import {
 	RefreshCw,
 	ShieldOff,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useReducer } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -58,16 +58,80 @@ const PasswordSchema = z.object({
 type PasswordForm = z.infer<typeof PasswordSchema>;
 type Step = "password" | "actions" | "backup-codes";
 
+// --- Reducer ---
+
+type Configure2FAState = {
+	isDialogOpen: boolean;
+	step: Step;
+	password: string;
+	backupCodes: string[];
+	showDisableConfirm: boolean;
+	isDisabling: boolean;
+	isRegenerating: boolean;
+};
+
+const initialState: Configure2FAState = {
+	isDialogOpen: false,
+	step: "password",
+	password: "",
+	backupCodes: [],
+	showDisableConfirm: false,
+	isDisabling: false,
+	isRegenerating: false,
+};
+
+type Configure2FAAction =
+	| { type: "OPEN_DIALOG" }
+	| { type: "CLOSE_DIALOG" }
+	| { type: "RESET_ON_CLOSE" }
+	| { type: "SET_STEP"; payload: Step }
+	| { type: "SET_PASSWORD"; payload: string }
+	| { type: "SET_BACKUP_CODES"; payload: string[] }
+	| { type: "SET_SHOW_DISABLE_CONFIRM"; payload: boolean }
+	| { type: "SET_IS_DISABLING"; payload: boolean }
+	| { type: "SET_IS_REGENERATING"; payload: boolean };
+
+function configure2FAReducer(
+	state: Configure2FAState,
+	action: Configure2FAAction,
+): Configure2FAState {
+	switch (action.type) {
+		case "OPEN_DIALOG":
+			return { ...state, isDialogOpen: true };
+		case "CLOSE_DIALOG":
+			return { ...state, isDialogOpen: false };
+		case "RESET_ON_CLOSE":
+			return { ...initialState };
+		case "SET_STEP":
+			return { ...state, step: action.payload };
+		case "SET_PASSWORD":
+			return { ...state, password: action.payload };
+		case "SET_BACKUP_CODES":
+			return { ...state, backupCodes: action.payload };
+		case "SET_SHOW_DISABLE_CONFIRM":
+			return { ...state, showDisableConfirm: action.payload };
+		case "SET_IS_DISABLING":
+			return { ...state, isDisabling: action.payload };
+		case "SET_IS_REGENERATING":
+			return { ...state, isRegenerating: action.payload };
+		default:
+			return state;
+	}
+}
+
 export const Configure2FA = () => {
 	const utils = api.useUtils();
 	const { data: currentUser } = api.user.get.useQuery();
-	const [isDialogOpen, setIsDialogOpen] = useState(false);
-	const [step, setStep] = useState<Step>("password");
-	const [password, setPassword] = useState("");
-	const [backupCodes, setBackupCodes] = useState<string[]>([]);
-	const [showDisableConfirm, setShowDisableConfirm] = useState(false);
-	const [isDisabling, setIsDisabling] = useState(false);
-	const [isRegenerating, setIsRegenerating] = useState(false);
+	const [state, dispatch] = useReducer(configure2FAReducer, initialState);
+	const {
+		isDialogOpen,
+		step,
+		password,
+		backupCodes,
+		showDisableConfirm,
+		isDisabling,
+		isRegenerating,
+	} = state;
 
 	const form = useForm<PasswordForm>({
 		resolver: zodResolver(PasswordSchema),
@@ -76,17 +140,18 @@ export const Configure2FA = () => {
 		},
 	});
 
-	useEffect(() => {
-		if (!isDialogOpen) {
-			setStep("password");
-			setPassword("");
-			setBackupCodes([]);
+	// Reset all state when the dialog closes
+	const handleDialogOpenChange = (open: boolean) => {
+		if (!open) {
+			dispatch({ type: "RESET_ON_CLOSE" });
 			form.reset();
+		} else {
+			dispatch({ type: "OPEN_DIALOG" });
 		}
-	}, [isDialogOpen, form]);
+	};
 
 	const handlePasswordSubmit = async (formData: PasswordForm) => {
-		setIsRegenerating(true);
+		dispatch({ type: "SET_IS_REGENERATING", payload: true });
 		try {
 			// Verify password by attempting to generate backup codes
 			// This validates the password and checks if 2FA is enabled
@@ -101,20 +166,20 @@ export const Configure2FA = () => {
 			}
 
 			// If we get here, password is correct
-			setPassword(formData.password);
-			setStep("actions");
+			dispatch({ type: "SET_PASSWORD", payload: formData.password });
+			dispatch({ type: "SET_STEP", payload: "actions" });
 		} catch (error) {
 			form.setError("password", {
 				message: error instanceof Error ? error.message : "Incorrect password",
 			});
 			toast.error("Incorrect password");
 		} finally {
-			setIsRegenerating(false);
+			dispatch({ type: "SET_IS_REGENERATING", payload: false });
 		}
 	};
 
 	const handleRegenerateBackupCodes = async () => {
-		setIsRegenerating(true);
+		dispatch({ type: "SET_IS_REGENERATING", payload: true });
 		try {
 			const result = await authClient.twoFactor.generateBackupCodes({
 				password,
@@ -126,8 +191,11 @@ export const Configure2FA = () => {
 			}
 
 			if (result.data?.backupCodes) {
-				setBackupCodes(result.data.backupCodes);
-				setStep("backup-codes");
+				dispatch({
+					type: "SET_BACKUP_CODES",
+					payload: result.data.backupCodes,
+				});
+				dispatch({ type: "SET_STEP", payload: "backup-codes" });
 				toast.success("Backup codes regenerated successfully");
 			}
 		} catch (error) {
@@ -137,12 +205,12 @@ export const Configure2FA = () => {
 					: "Failed to regenerate backup codes",
 			);
 		} finally {
-			setIsRegenerating(false);
+			dispatch({ type: "SET_IS_REGENERATING", payload: false });
 		}
 	};
 
 	const handleDisable2FA = async () => {
-		setIsDisabling(true);
+		dispatch({ type: "SET_IS_DISABLING", payload: true });
 		try {
 			const result = await authClient.twoFactor.disable({
 				password,
@@ -155,20 +223,19 @@ export const Configure2FA = () => {
 
 			toast.success("2FA disabled successfully");
 			utils.user.get.invalidate();
-			setIsDialogOpen(false);
-			setShowDisableConfirm(false);
+			dispatch({ type: "RESET_ON_CLOSE" });
 		} catch (error) {
 			toast.error("Failed to disable 2FA. Please try again.");
 		} finally {
-			setIsDisabling(false);
+			dispatch({ type: "SET_IS_DISABLING", payload: false });
 		}
 	};
 
 	const handleCloseDialog = () => {
 		if (step === "backup-codes") {
-			setStep("actions");
+			dispatch({ type: "SET_STEP", payload: "actions" });
 		} else {
-			setIsDialogOpen(false);
+			dispatch({ type: "CLOSE_DIALOG" });
 		}
 	};
 
@@ -222,7 +289,7 @@ export const Configure2FA = () => {
 
 	return (
 		<>
-			<Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+			<Dialog open={isDialogOpen} onOpenChange={handleDialogOpenChange}>
 				<DialogTrigger asChild>
 					<Button variant="secondary">
 						<KeyRound className="size-4 text-muted-foreground" />
@@ -276,7 +343,7 @@ export const Configure2FA = () => {
 									<Button
 										type="button"
 										variant="outline"
-										onClick={() => setIsDialogOpen(false)}
+										onClick={() => dispatch({ type: "CLOSE_DIALOG" })}
 									>
 										Cancel
 									</Button>
@@ -329,7 +396,12 @@ export const Configure2FA = () => {
 										</div>
 									</div>
 									<Button
-										onClick={() => setShowDisableConfirm(true)}
+										onClick={() =>
+											dispatch({
+												type: "SET_SHOW_DISABLE_CONFIRM",
+												payload: true,
+											})
+										}
 										variant="destructive"
 										className="w-full mt-2"
 									>
@@ -342,7 +414,7 @@ export const Configure2FA = () => {
 							<div className="flex justify-end">
 								<Button
 									variant="outline"
-									onClick={() => setIsDialogOpen(false)}
+									onClick={() => dispatch({ type: "CLOSE_DIALOG" })}
 								>
 									Close
 								</Button>
@@ -393,7 +465,9 @@ export const Configure2FA = () => {
 								<Button variant="outline" onClick={handleCloseDialog}>
 									Back to Actions
 								</Button>
-								<Button onClick={() => setIsDialogOpen(false)}>Done</Button>
+								<Button onClick={() => dispatch({ type: "CLOSE_DIALOG" })}>
+									Done
+								</Button>
 							</div>
 						</div>
 					)}
@@ -402,7 +476,9 @@ export const Configure2FA = () => {
 
 			<AlertDialog
 				open={showDisableConfirm}
-				onOpenChange={setShowDisableConfirm}
+				onOpenChange={(open) =>
+					dispatch({ type: "SET_SHOW_DISABLE_CONFIRM", payload: open })
+				}
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
