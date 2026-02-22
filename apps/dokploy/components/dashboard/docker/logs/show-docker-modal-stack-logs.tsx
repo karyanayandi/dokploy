@@ -47,6 +47,7 @@ export const ShowDockerModalStackLogs = ({
 				</DialogHeader>
 				<div className="flex flex-col gap-4 pt-2.5">
 					<DockerLogsId
+						key={containerId}
 						containerId={containerId || ""}
 						serverId={serverId}
 						runType="swarm"

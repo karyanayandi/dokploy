@@ -103,6 +103,7 @@ export const ShowModalLogs = ({
 						</SelectContent>
 					</Select>
 					<DockerLogsId
+						key={containerId}
 						containerId={containerId || ""}
 						serverId={serverId}
 						runType="native"

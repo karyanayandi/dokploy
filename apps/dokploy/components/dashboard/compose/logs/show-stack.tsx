@@ -164,6 +164,7 @@ export const ShowDockerLogsStack = ({ appName, serverId }: Props) => {
 						</div>
 					)}
 				<DockerLogs
+					key={containerId}
 					serverId={serverId || ""}
 					containerId={containerId || "select-a-container"}
 					runType={option}

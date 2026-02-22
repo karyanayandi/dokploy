@@ -287,12 +287,6 @@ export const DockerLogsId: React.FC<Props> = ({
 	}, [isPaused]);
 
 	useEffect(() => {
-		setRawLogs("");
-		setFilteredLogs([]);
-		setMessageBuffer([]);
-	}, [containerId]);
-
-	useEffect(() => {
 		const logs = parseLogs(rawLogs);
 		const filtered = handleFilter(logs);
 		setFilteredLogs(filtered);
