@@ -14,10 +14,6 @@ export const ShowWelcomeDokploy = () => {
 
 	const { data: isCloud, isLoading } = api.settings.isCloud.useQuery();
 
-	if (!isCloud || data?.role !== "admin") {
-		return null;
-	}
-
 	useEffect(() => {
 		if (
 			!isLoading &&
@@ -27,7 +23,11 @@ export const ShowWelcomeDokploy = () => {
 		) {
 			setOpen(true);
 		}
-	}, [isCloud, isLoading]);
+	}, [isCloud, isLoading, data?.role]);
+
+	if (!isCloud || data?.role !== "admin") {
+		return null;
+	}
 
 	const handleClose = (isOpen: boolean) => {
 		if (data?.role === "owner") {
