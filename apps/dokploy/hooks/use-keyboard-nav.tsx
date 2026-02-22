@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 
 const PAGES = [
 	"compose",
@@ -79,7 +79,7 @@ const SHORTCUTS: ShortcutsDictionary = {
  * - `g e` "Environment",
  * - `g u` "Domains",
  */
-export function UseKeyboardNav({ forPage }: { forPage: Page }) {
+function KeyboardNavInner({ forPage }: { forPage: Page }) {
 	const [isModPressed, setModPressed] = useState(false);
 	const [timer, setTimer] = useState<NodeJS.Timeout | null>(null);
 
@@ -134,4 +134,12 @@ export function UseKeyboardNav({ forPage }: { forPage: Page }) {
 	}, [isModPressed, timer, updateSearchParam, router, pathname]);
 
 	return null;
+}
+
+export function UseKeyboardNav({ forPage }: { forPage: Page }) {
+	return (
+		<Suspense>
+			<KeyboardNavInner forPage={forPage} />
+		</Suspense>
+	);
 }
