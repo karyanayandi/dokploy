@@ -53,7 +53,6 @@ interface Props {
 	tokenResetPassword: string;
 }
 export default function Home({ tokenResetPassword }: Props) {
-	const [token, setToken] = useState<string | null>(tokenResetPassword);
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const router = useRouter();
@@ -66,14 +65,6 @@ export default function Home({ tokenResetPassword }: Props) {
 	});
 
 	useEffect(() => {
-		const token = new URLSearchParams(window.location.search).get("token");
-
-		if (token) {
-			setToken(token);
-		}
-	}, [token]);
-
-	useEffect(() => {
 		form.reset();
 	}, [form, form.reset, form.formState.isSubmitSuccessful]);
 
@@ -81,7 +72,7 @@ export default function Home({ tokenResetPassword }: Props) {
 		setIsLoading(true);
 		const { error } = await authClient.resetPassword({
 			newPassword: values.password,
-			token: token || "",
+			token: tokenResetPassword,
 		});
 
 		if (error) {
