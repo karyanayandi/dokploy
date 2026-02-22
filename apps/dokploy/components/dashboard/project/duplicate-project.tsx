@@ -1,6 +1,6 @@
 import { Copy, Loader2 } from "lucide-react";
 import { useRouter } from "next/router";
-import { useState } from "react";
+import { useReducer } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +23,70 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/utils/api";
+
+type DuplicateProjectState = {
+	open: boolean;
+	name: string;
+	description: string;
+	duplicateType: string;
+	selectedTargetProject: string;
+	selectedTargetEnvironment: string;
+};
+
+type DuplicateProjectAction =
+	| { type: "OPEN_DIALOG" }
+	| { type: "CLOSE_DIALOG" }
+	| { type: "SET_NAME"; payload: string }
+	| { type: "SET_DESCRIPTION"; payload: string }
+	| { type: "SET_DUPLICATE_TYPE"; payload: string }
+	| { type: "SET_TARGET_PROJECT"; payload: string }
+	| { type: "SET_TARGET_ENVIRONMENT"; payload: string };
+
+const initialState: DuplicateProjectState = {
+	open: false,
+	name: "",
+	description: "",
+	duplicateType: "new-project",
+	selectedTargetProject: "",
+	selectedTargetEnvironment: "",
+};
+
+function duplicateProjectReducer(
+	state: DuplicateProjectState,
+	action: DuplicateProjectAction,
+): DuplicateProjectState {
+	switch (action.type) {
+		case "OPEN_DIALOG":
+			return { ...state, open: true };
+		case "CLOSE_DIALOG":
+			return { ...initialState };
+		case "SET_NAME":
+			return { ...state, name: action.payload };
+		case "SET_DESCRIPTION":
+			return { ...state, description: action.payload };
+		case "SET_DUPLICATE_TYPE":
+			return {
+				...state,
+				duplicateType: action.payload,
+				selectedTargetProject:
+					action.payload !== "existing-environment"
+						? ""
+						: state.selectedTargetProject,
+				selectedTargetEnvironment:
+					action.payload !== "existing-environment"
+						? ""
+						: state.selectedTargetEnvironment,
+			};
+		case "SET_TARGET_PROJECT":
+			return {
+				...state,
+				selectedTargetProject: action.payload,
+				selectedTargetEnvironment: "",
+			};
+		case "SET_TARGET_ENVIRONMENT":
+			return { ...state, selectedTargetEnvironment: action.payload };
+	}
+}
 
 export type Services = {
 	appName: string;
@@ -53,14 +117,15 @@ export const DuplicateProject = ({
 	services,
 	selectedServiceIds,
 }: DuplicateProjectProps) => {
-	const [open, setOpen] = useState(false);
-	const [name, setName] = useState("");
-	const [description, setDescription] = useState("");
-	const [duplicateType, setDuplicateType] = useState("new-project"); // "new-project" or "existing-environment"
-	const [selectedTargetProject, setSelectedTargetProject] =
-		useState<string>("");
-	const [selectedTargetEnvironment, setSelectedTargetEnvironment] =
-		useState<string>("");
+	const [state, dispatch] = useReducer(duplicateProjectReducer, initialState);
+	const {
+		open,
+		name,
+		description,
+		duplicateType,
+		selectedTargetProject,
+		selectedTargetEnvironment,
+	} = state;
 	const utils = api.useUtils();
 	const router = useRouter();
 
@@ -108,7 +173,7 @@ export const DuplicateProject = ({
 						? "Project duplicated successfully"
 						: "Services duplicated successfully",
 				);
-				setOpen(false);
+				dispatch({ type: "CLOSE_DIALOG" });
 				if (duplicateType === "new-project") {
 					router.push(
 						`/dashboard/project/${newProject?.projectId}/environment/${newProject?.environmentId}`,
@@ -155,14 +220,10 @@ export const DuplicateProject = ({
 		<Dialog
 			open={open}
 			onOpenChange={(isOpen) => {
-				setOpen(isOpen);
-				if (!isOpen) {
-					// Reset form when closing
-					setName("");
-					setDescription("");
-					setDuplicateType("new-project");
-					setSelectedTargetProject("");
-					setSelectedTargetEnvironment("");
+				if (isOpen) {
+					dispatch({ type: "OPEN_DIALOG" });
+				} else {
+					dispatch({ type: "CLOSE_DIALOG" });
 				}
 			}}
 		>
@@ -186,12 +247,7 @@ export const DuplicateProject = ({
 						<RadioGroup
 							value={duplicateType}
 							onValueChange={(value) => {
-								setDuplicateType(value);
-								// Reset selections when changing type
-								if (value !== "existing-environment") {
-									setSelectedTargetProject("");
-									setSelectedTargetEnvironment("");
-								}
+								dispatch({ type: "SET_DUPLICATE_TYPE", payload: value });
 							}}
 							className="grid gap-2"
 						>
@@ -218,7 +274,12 @@ export const DuplicateProject = ({
 								<Input
 									id="name"
 									value={name}
-									onChange={(e) => setName(e.target.value)}
+									onChange={(e) =>
+										dispatch({
+											type: "SET_NAME",
+											payload: e.target.value,
+										})
+									}
 									placeholder="New project name"
 								/>
 							</div>
@@ -228,7 +289,12 @@ export const DuplicateProject = ({
 								<Input
 									id="description"
 									value={description}
-									onChange={(e) => setDescription(e.target.value)}
+									onChange={(e) =>
+										dispatch({
+											type: "SET_DESCRIPTION",
+											payload: e.target.value,
+										})
+									}
 									placeholder="Project description (optional)"
 								/>
 							</div>
@@ -252,8 +318,10 @@ export const DuplicateProject = ({
 										<Select
 											value={selectedTargetProject}
 											onValueChange={(value) => {
-												setSelectedTargetProject(value);
-												setSelectedTargetEnvironment(""); // Reset environment when project changes
+												dispatch({
+													type: "SET_TARGET_PROJECT",
+													payload: value,
+												});
 											}}
 										>
 											<SelectTrigger>
@@ -280,7 +348,12 @@ export const DuplicateProject = ({
 											<Label>Target Environment</Label>
 											<Select
 												value={selectedTargetEnvironment}
-												onValueChange={setSelectedTargetEnvironment}
+												onValueChange={(value) =>
+													dispatch({
+														type: "SET_TARGET_ENVIRONMENT",
+														payload: value,
+													})
+												}
 											>
 												<SelectTrigger>
 													<SelectValue placeholder="Select target environment" />
@@ -320,7 +393,7 @@ export const DuplicateProject = ({
 				<DialogFooter>
 					<Button
 						variant="outline"
-						onClick={() => setOpen(false)}
+						onClick={() => dispatch({ type: "CLOSE_DIALOG" })}
 						disabled={isLoading}
 					>
 						Cancel
