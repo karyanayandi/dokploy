@@ -29,8 +29,10 @@ interface DataTableFacetedFilterProps {
 	}[];
 }
 
+const EMPTY_STRING_ARRAY: string[] = [];
+
 export function DataTableFacetedFilter({
-	value = [],
+	value = EMPTY_STRING_ARRAY,
 	setValue,
 	title,
 	options,
